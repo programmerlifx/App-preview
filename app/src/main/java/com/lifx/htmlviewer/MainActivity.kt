@@ -1,193 +1,364 @@
+
 package com.lifx.htmlviewer
 
-import android.app.Activity
 import android.content.Intent
-import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.graphics.Color
 import android.view.Gravity
 import android.view.View
-import android.widget.*
+import android.view.ViewGroup
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
+import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 
-class MainActivity : Activity() {
-    private val bg = Color.rgb(8, 11, 13)
-    private val panel = Color.rgb(17, 21, 24)
-    private val green = Color.rgb(28, 210, 128)
-    private lateinit var root: LinearLayout
-    private var selectedUri: Uri? = null
-    private var selectedName = "Belum ada file dipilih"
+class MainActivity : ComponentActivity() {
 
-    private val openHtml = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
-            selectedUri = uri
-            selectedName = uri.lastPathSegment?.substringAfterLast('/') ?: "File HTML"
-            showHome()
+    private lateinit var root: LinearLayout
+    private lateinit var webView: WebView
+    private lateinit var statusText: TextView
+
+    private var currentUri: Uri? = null
+    private var showingPreview = false
+
+    private val backgroundColor = Color.rgb(15, 17, 16)
+    private val panelColor = Color.rgb(28, 31, 29)
+    private val accentColor = Color.rgb(120, 220, 140)
+    private val textColor = Color.rgb(240, 242, 240)
+    private val mutedColor = Color.rgb(160, 168, 161)
+
+    private val openHtml =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+            if (uri != null) {
+                try {
+                    contentResolver.takePersistableUriPermission(
+                        uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                } catch (_: Exception) {
+                    // Beberapa penyedia file tidak mendukung izin persisten.
+                }
+
+                openHtmlFile(uri)
+            }
         }
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        handleIncoming(intent)
+
+        createInterface()
+        handleIncomingIntent(intent)
+    }
+
+    private fun createInterface() {
+        root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(backgroundColor)
+            setPadding(dp(20), dp(20), dp(20), dp(12))
+        }
+
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        val brand = TextView(this).apply {
+            text = "LIFX / VIEWER"
+            textSize = 12f
+            setTextColor(accentColor)
+            letterSpacing = 0.14f
+        }
+
+        val title = TextView(this).apply {
+            text = "HTML Viewer"
+            textSize = 29f
+            setTextColor(textColor)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, dp(8), 0, dp(5))
+        }
+
+        val subtitle = TextView(this).apply {
+            text = "Buka dan pratinjau halaman HTML lokal."
+            textSize = 13f
+            setTextColor(mutedColor)
+        }
+
+        header.addView(brand)
+        header.addView(title)
+        header.addView(subtitle)
+
+        root.addView(
+            header,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
+
+        val openButton = createButton("Pilih file HTML", true) {
+            openHtml.launch(arrayOf("text/html", "application/xhtml+xml", "*/*"))
+        }
+
+        val homeButton = createButton("Beranda", false) {
+            showHome()
+        }
+
+        val toolbar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        toolbar.addView(
+            openButton,
+            LinearLayout.LayoutParams(0, dp(48), 1f).apply {
+                marginEnd = dp(8)
+            }
+        )
+
+        toolbar.addView(
+            homeButton,
+            LinearLayout.LayoutParams(0, dp(48), 1f)
+        )
+
+        root.addView(
+            toolbar,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(22)
+                bottomMargin = dp(14)
+            }
+        )
+
+        statusText = TextView(this).apply {
+            text = "SIAP DIGUNAKAN"
+            textSize = 11f
+            setTextColor(accentColor)
+            letterSpacing = 0.08f
+            setPadding(0, dp(8), 0, dp(10))
+        }
+
+        root.addView(statusText)
+
+        webView = WebView(this).apply {
+            setBackgroundColor(Color.WHITE)
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.allowFileAccess = false
+            settings.allowContentAccess = true
+            settings.javaScriptCanOpenWindowsAutomatically = false
+            settings.setSupportMultipleWindows(false)
+
+            webChromeClient = WebChromeClient()
+
+            webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(
+                    view: WebView?,
+                    request: WebResourceRequest?
+                ): Boolean {
+                    val uri = request?.url ?: return true
+
+                    // Batasi navigasi ke konten lokal yang dipilih
+                    // atau situs HTTP/HTTPS.
+                    return when (uri.scheme?.lowercase()) {
+                        "content", "file", "http", "https", "about" -> false
+                        else -> true
+                    }
+                }
+
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    statusText.text = "PREVIEW AKTIF"
+                }
+            }
+        }
+
+        root.addView(
+            webView,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        )
+
+        val footer = TextView(this).apply {
+            text = "LIFX HTML VIEWER  •  LOCAL PREVIEW"
+            textSize = 10f
+            setTextColor(mutedColor)
+            gravity = Gravity.CENTER
+            setPadding(0, dp(14), 0, dp(4))
+        }
+
+        root.addView(footer)
+
+        setContentView(root)
         showHome()
+    }
+
+    private fun createButton(
+        label: String,
+        primary: Boolean,
+        action: () -> Unit
+    ): Button {
+        return Button(this).apply {
+            text = label
+            textSize = 13f
+            isAllCaps = false
+            setTextColor(if (primary) Color.BLACK else textColor)
+            setBackgroundColor(if (primary) accentColor else panelColor)
+            setOnClickListener { action() }
+        }
+    }
+
+    private fun showHome() {
+        showingPreview = false
+        webView.stopLoading()
+        webView.loadUrl("about:blank")
+        webView.visibility = View.GONE
+
+        statusText.text = "BERANDA"
+
+        val existing = root.findViewWithTag<View>("home-content")
+        if (existing != null) {
+            existing.visibility = View.VISIBLE
+            return
+        }
+
+        val homeContent = LinearLayout(this).apply {
+            tag = "home-content"
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(20), dp(18), dp(20))
+            setBackgroundColor(panelColor)
+        }
+
+        val heading = TextView(this).apply {
+            text = "Buka halaman web."
+            textSize = 21f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setTextColor(textColor)
+        }
+
+        val description = TextView(this).apply {
+            text = "\nPilih file HTML dari penyimpanan perangkat untuk menampilkannya di sini.\n\nFile akan dibuka melalui pemilih file Android. Akses hanya diberikan untuk file yang kamu pilih."
+            textSize = 14f
+            setTextColor(mutedColor)
+            setLineSpacing(dp(4).toFloat(), 1f)
+        }
+
+        val chooseButton = createButton("Pilih HTML sekarang", true) {
+            openHtml.launch(arrayOf("text/html", "application/xhtml+xml", "*/*"))
+        }
+
+        homeContent.addView(heading)
+        homeContent.addView(description)
+        homeContent.addView(
+            chooseButton,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(48)
+            ).apply {
+                topMargin = dp(18)
+            }
+        )
+
+        root.addView(
+            homeContent,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        )
+    }
+
+    private fun openHtmlFile(uri: Uri) {
+        currentUri = uri
+        showingPreview = true
+
+        root.findViewWithTag<View>("home-content")?.visibility = View.GONE
+        webView.visibility = View.VISIBLE
+
+        statusText.text = "MEMBUKA HTML..."
+
+        try {
+            webView.loadUrl(uri.toString())
+        } catch (e: Exception) {
+            statusText.text = "GAGAL MEMBUKA FILE"
+            Toast.makeText(
+                this,
+                "File tidak dapat dibuka: ${e.localizedMessage ?: "kesalahan tidak diketahui"}",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    private fun handleIncomingIntent(intent: Intent?) {
+        if (intent == null) return
+
+        val uri = when (intent.action) {
+            Intent.ACTION_VIEW -> intent.data
+            Intent.ACTION_SEND -> {
+                if (android.os.Build.VERSION.SDK_INT >= 33) {
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM) as? Uri
+                }
+            }
+            else -> null
+        }
+
+        if (uri != null) {
+            try {
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {
+                // Intent dari aplikasi lain mungkin memberi izin sementara.
+            }
+
+            openHtmlFile(uri)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleIncoming(intent)
-        showHome()
+        handleIncomingIntent(intent)
     }
 
-    private fun handleIncoming(intent: Intent?) {
-        val uri = intent?.data ?: (intent?.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))
-        if (uri != null) {
-            selectedUri = uri
-            selectedName = uri.lastPathSegment?.substringAfterLast('/') ?: "File HTML"
-            try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
-        }
-    }
-
-    private fun showHome() {
-        root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(24), dp(20), dp(12))
-            setBackgroundColor(bg)
-        }
-        val scroll = ScrollView(this).apply { addView(root) }
-        setContentView(scroll)
-
-        label(root, "‹  LIFX", 26, green, true, 0, 0, 0, 4)
-        label(root, "HTML Viewer", 30, Color.WHITE, true, 0, 0, 0, 6)
-        label(root, "Buka dan preview website langsung dari perangkat.", 14, 0xFF9CA5AD.toInt(), false, 0, 0, 0, 24)
-
-        val hero = card(root)
-        label(hero, "⌘", 52, green, true, 0, 0, 0, 4, Gravity.CENTER)
-        label(hero, "PREVIEW HTML", 20, Color.WHITE, true, 0, 0, 0, 8, Gravity.CENTER)
-        label(hero, "File HTML tunggal atau website satu folder dengan CSS, JavaScript, gambar, font, dan aset pendukung.", 14, 0xFF9CA5AD.toInt(), false, 8, 0, 8, 18, Gravity.CENTER)
-        button(hero, "Pilih File HTML", true) { openHtml.launch(arrayOf("text/html", "application/xhtml+xml", "text/*")) }
-        button(hero, "Buka dari aplikasi lain", false) {
-            Toast.makeText(this, "Pilih LIFX HTML Viewer dari menu Bagikan atau Buka dengan.", Toast.LENGTH_LONG).show()
-        }
-
-        val fileCard = card(root)
-        label(fileCard, "FILE TERPILIH", 12, green, true, 0, 0, 0, 8)
-        label(fileCard, selectedName, 17, Color.WHITE, true, 0, 0, 0, 4)
-        label(fileCard, selectedUri?.toString() ?: "Pilih file untuk memulai preview.", 12, 0xFF9CA5AD.toInt(), false, 0, 0, 0, 12)
-        button(fileCard, "Tampilkan Preview", true) {
-            val uri = selectedUri
-            if (uri == null) Toast.makeText(this, "Pilih file HTML terlebih dahulu.", Toast.LENGTH_SHORT).show()
-            else {
-                val i = Intent(this, PreviewActivity::class.java).putExtra("uri", uri.toString()).putExtra("name", selectedName)
-                startActivity(i)
+    override fun onBackPressed() {
+        when {
+            webView.visibility == View.VISIBLE && webView.canGoBack() -> {
+                webView.goBack()
             }
-        }
-
-        val history = card(root)
-        label(history, "ALUR PENGGUNAAN", 12, green, true, 0, 0, 0, 10)
-        label(history, "01  Pilih file HTML", 15, Color.WHITE, true, 0, 0, 0, 8)
-        label(history, "02  Untuk website lengkap, pilih index.html di folder asal agar tautan relatif ke CSS dan gambar tetap bekerja.", 13, 0xFF9CA5AD.toInt(), false, 0, 0, 0, 8)
-        label(history, "03  Gunakan menu Buka dengan / Bagikan pada pengelola file untuk membuka HTML di aplikasi ini.", 13, 0xFF9CA5AD.toInt(), false, 0, 0, 0, 4)
-
-        val nav = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setPadding(0, dp(10), 0, dp(4))
-        }
-        root.addView(nav, LinearLayout.LayoutParams(-1, -2))
-        listOf("⌂\nBeranda", "◷\nRiwayat", "☆\nFavorit", "⚙\nPengaturan").forEachIndexed { idx, title ->
-            val b = TextView(this).apply {
-                text = title
-                gravity = Gravity.CENTER
-                textSize = 12f
-                setTextColor(if (idx == 0) green else 0xFF929BA4.toInt())
-                setPadding(dp(8), dp(10), dp(8), dp(10))
-                setOnClickListener { showSection(idx) }
+            showingPreview -> {
+                showHome()
             }
-            nav.addView(b, LinearLayout.LayoutParams(0, -2, 1f))
+            else -> {
+                super.onBackPressed()
+            }
         }
     }
 
-    private fun showSection(which: Int) {
-        if (which == 0) { showHome(); return }
-        root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(24), dp(20), dp(16))
-            setBackgroundColor(bg)
-        }
-        val scroll = ScrollView(this).apply { addView(root) }
-        setContentView(scroll)
-        label(root, "‹  LIFX HTML Viewer", 24, green, true, 0, 0, 0, 24)
-        when (which) {
-            1 -> {
-                label(root, "Riwayat File", 27, Color.WHITE, true, 0, 0, 0, 10)
-                label(root, "Riwayat sesi ini", 14, 0xFF9CA5AD.toInt(), false, 0, 0, 0, 12)
-                val c = card(root)
-                label(c, selectedName, 17, Color.WHITE, true, 0, 0, 0, 5)
-                label(c, if (selectedUri == null) "Belum ada file dibuka." else selectedUri.toString(), 12, 0xFF9CA5AD.toInt(), false, 0, 0, 0, 10)
-                button(c, "Buka Lagi", true) { selectedUri?.let { startActivity(Intent(this, PreviewActivity::class.java).putExtra("uri", it.toString()).putExtra("name", selectedName)) } }
-            }
-            2 -> {
-                label(root, "Favorit", 27, Color.WHITE, true, 0, 0, 0, 10)
-                label(root, "Simpan file yang sering digunakan dengan memilih file dari beranda. Fitur favorit tersimpan akan dikembangkan pada versi berikutnya.", 14, 0xFF9CA5AD.toInt(), false, 0, 0, 0, 12)
-            }
-            3 -> {
-                label(root, "Pengaturan", 27, Color.WHITE, true, 0, 0, 0, 12)
-                val c = card(root)
-                label(c, "Privasi & Izin", 17, Color.WHITE, true, 0, 0, 0, 8)
-                label(c, "Aplikasi menggunakan pemilih dokumen Android. Akses diberikan untuk file yang Anda pilih, tanpa meminta izin seluruh penyimpanan.", 14, 0xFF9CA5AD.toInt(), false, 0, 0, 0, 8)
-                label(c, "Mode preview", 17, Color.WHITE, true, 0, 12, 0, 8)
-                label(c, "Konten HTML lokal dapat menjalankan JavaScript. Buka hanya file dari sumber tepercaya.", 14, 0xFF9CA5AD.toInt(), false, 0, 0, 0, 8)
-                label(root, "LIFX HTML Viewer  •  Versi 1.0.0", 13, 0xFF9CA5AD.toInt(), false, 0, 20, 0, 0)
-            }
-        }
-        button(root, "Kembali ke Beranda", true) { showHome() }
+    private fun dp(value: Int): Int {
+        return (value * resources.displayMetrics.density).toInt()
     }
 
-    private fun card(parent: LinearLayout): LinearLayout {
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(16))
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(panel); cornerRadius = dp(18).toFloat()
-                setStroke(dp(1), 0xFF292F34.toInt())
-            }
+    override fun onDestroy() {
+        if (::webView.isInitialized) {
+            webView.stopLoading()
+            webView.destroy()
         }
-        val p = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(16) }
-        parent.addView(box, p)
-        return box
+        super.onDestroy()
     }
-
-    private fun label(parent: LinearLayout, text: String, size: Int, color: Int, bold: Boolean,
-                      left: Int, top: Int, right: Int, bottom: Int, gravity: Int = Gravity.START) {
-        val t = TextView(this).apply {
-            this.text = text; textSize = size.toFloat(); setTextColor(color)
-            if (bold) setTypeface(typeface, android.graphics.Typeface.BOLD)
-            this.gravity = gravity
-            setLineSpacing(dp(2).toFloat(), 1.0f)
-        }
-        val p = LinearLayout.LayoutParams(-1, -2).apply {
-            setMargins(dp(left), dp(top), dp(right), dp(bottom))
-        }
-        parent.addView(t, p)
-    }
-
-    private fun button(parent: LinearLayout, text: String, primary: Boolean, action: () -> Unit) {
-        val b = TextView(this).apply {
-            this.text = text; textSize = 15f; gravity = Gravity.CENTER
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setTextColor(if (primary) Color.rgb(4, 25, 17) else Color.WHITE)
-            setPadding(dp(16), dp(15), dp(16), dp(15))
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(if (primary) green else panel)
-                cornerRadius = dp(16).toFloat()
-                setStroke(dp(1), if (primary) green else 0xFF343B40.toInt())
-            }
-            setOnClickListener { action() }
-        }
-        parent.addView(b, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
-    }
-
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 }
