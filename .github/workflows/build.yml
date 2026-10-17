@@ -31,25 +31,21 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Setup Android SDK
+      - name: Install Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: ''
 
-      - name: Install Android SDK Packages
+      - name: Install SDK Platform and Build Tools
         run: |
-          sdkmanager --install \
+          yes | sdkmanager --licenses
+          sdkmanager \
+            "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
-          yes | sdkmanager --licenses || true
 
-      - name: Verify Build Environment
-        run: |
-          java -version
-          gradle --version
-          sdkmanager --list_installed
-
-      - name: Build Debug APK
-        run: |
-          gradle --no-daemon --stacktrace assembleDebug
+      - name: Build APK
+        run: gradle --no-daemon --stacktrace assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
